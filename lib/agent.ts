@@ -69,13 +69,19 @@ export async function getAgent(agentId: string): Promise<AgentRecord | null> {
 export async function getFeed(agentId: string): Promise<Post[]> {
   const supabase = getSupabaseClient();
   if (supabase) {
+    console.log('[getFeed] Querying Supabase for agent:', agentId);
     const { data, error } = await supabase
       .from('posts')
       .select('id, created_at, text, rationale, sources')
       .eq('agent_id', agentId)
       .order('created_at', { ascending: false });
 
+    if (error) {
+      console.error('[getFeed] Supabase query error:', JSON.stringify(error));
+    }
+
     if (!error && data) {
+      console.log('[getFeed] Supabase returned', data.length, 'posts');
       return data.map((item) => ({
         id: item.id,
         createdAt: new Date(item.created_at).toISOString(),
@@ -84,6 +90,8 @@ export async function getFeed(agentId: string): Promise<Post[]> {
         sources: Array.isArray(item.sources) ? item.sources : [],
       }));
     }
+  } else {
+    console.log('[getFeed] No Supabase client, using in-memory store');
   }
 
   return inMemoryStore.getPosts(agentId);
