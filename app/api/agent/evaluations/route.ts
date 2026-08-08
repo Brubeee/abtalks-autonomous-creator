@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getEvaluations } from '@/lib/agent';
-import { inMemoryStore } from '@/lib/supabase';
+import { getEvaluations, getLatestAgent } from '@/lib/agent';
 
 export const dynamic = 'force-dynamic';
 
@@ -10,7 +9,7 @@ export async function GET(req: NextRequest) {
     let agentId = searchParams.get('agentId');
 
     if (!agentId) {
-      const defaultAgent = await inMemoryStore.getLatestAgent();
+      const defaultAgent = await getLatestAgent();
       if (defaultAgent) agentId = defaultAgent.id;
     }
 

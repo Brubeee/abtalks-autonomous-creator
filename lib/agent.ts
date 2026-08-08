@@ -66,6 +66,15 @@ export async function getAgent(agentId: string): Promise<AgentRecord | null> {
   return inMemoryStore.getAgent(agentId);
 }
 
+export async function getLatestAgent(): Promise<AgentRecord | null> {
+  const supabase = getSupabaseClient();
+  if (supabase) {
+    const { data, error } = await supabase.from('agents').select('*').order('created_at', { ascending: false }).limit(1);
+    if (!error && data && data.length > 0) return data[0] as AgentRecord;
+  }
+  return inMemoryStore.getLatestAgent();
+}
+
 export async function getFeed(agentId: string): Promise<Post[]> {
   const supabase = getSupabaseClient();
   if (supabase) {

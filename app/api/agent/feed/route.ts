@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseClient, hasSupabaseConfig } from '@/lib/supabase';
-import { getFeed } from '@/lib/agent';
-import { inMemoryStore } from '@/lib/supabase';
+import { getFeed, getLatestAgent } from '@/lib/agent';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,7 +12,7 @@ export async function GET(req: NextRequest) {
 
     // If agentId is not provided, try to find the latest active agent for convenience
     if (!agentId) {
-      const defaultAgent = await inMemoryStore.getLatestAgent();
+      const defaultAgent = await getLatestAgent();
       if (defaultAgent) {
         agentId = defaultAgent.id;
       }
