@@ -36,3 +36,13 @@ CREATE TABLE IF NOT EXISTS evaluations (
 );
 
 CREATE INDEX IF NOT EXISTS idx_evaluations_agent_created ON evaluations(agent_id, created_at DESC);
+
+-- 4. Enable Row Level Security (RLS) & Public Read Access Policies
+ALTER TABLE agents ENABLE ROW LEVEL SECURITY;
+ALTER TABLE posts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE evaluations ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Allow public read access to agents" ON agents FOR SELECT USING (true);
+CREATE POLICY "Allow public read access to posts" ON posts FOR SELECT USING (true);
+CREATE POLICY "Allow public read access to evaluations" ON evaluations FOR SELECT USING (true);
+
