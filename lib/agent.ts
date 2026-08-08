@@ -121,6 +121,22 @@ export async function getEvaluations(agentId: string): Promise<EvaluationRecord[
   return inMemoryStore.getEvaluations(agentId);
 }
 
+export async function ensureAgentExists(agent: AgentRecord): Promise<void> {
+  const supabase = getSupabaseClient();
+  if (supabase) {
+    const { data } = await supabase.from('agents').select('id').eq('id', agent.id).single();
+    if (!data) {
+      await supabase.from('agents').upsert({
+        id: agent.id,
+        name: agent.name,
+        domain: agent.domain,
+        system_prompt: agent.system_prompt,
+        created_at: agent.created_at || new Date().toISOString(),
+      });
+    }
+  }
+}
+
 export async function runCronCycle(targetAgentId?: string): Promise<{
   agentId: string;
   evaluatedCount: number;
@@ -151,6 +167,8 @@ export async function runCronCycle(targetAgentId?: string): Promise<{
   if (!agent) {
     throw new Error('No persona initialized. Call POST /api/agent/init first.');
   }
+
+  await ensureAgentExists(agent);
 
   // 2. Pull memory of recent published posts ONLY from the posts table
   const recentPosts = await getFeed(agent.id);
