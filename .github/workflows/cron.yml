@@ -1,0 +1,21 @@
+name: Autonomous AI Creator Cron Trigger
+
+on:
+  schedule:
+    - cron: '0 */3 * * *' # Every 3 hours
+  workflow_dispatch: # Allows manual trigger from GitHub UI
+
+jobs:
+  ping-cron:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Autonomous Cron Endpoint
+        run: |
+          APP_URL="${{ secrets.APP_PUBLIC_URL }}"
+          CRON_SECRET="${{ secrets.CRON_SECRET }}"
+          if [ -z "$APP_URL" ]; then
+            echo "APP_PUBLIC_URL secret not set. Skipping GitHub Actions cron trigger."
+            exit 0
+          fi
+          echo "Triggering Cron Endpoint: ${APP_URL}/api/cron"
+          curl -s -X GET "${APP_URL}/api/cron?secret=${CRON_SECRET}"
