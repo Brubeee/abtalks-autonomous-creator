@@ -75,21 +75,26 @@ export async function getLatestAgent(): Promise<AgentRecord | null> {
   return inMemoryStore.getLatestAgent();
 }
 
-export async function getFeed(agentId: string): Promise<Post[]> {
+export async function getFeed(agentId?: string): Promise<Post[]> {
   const supabase = getSupabaseClient();
   if (supabase) {
     console.log('[getFeed] Querying Supabase for agent:', agentId);
-    const { data, error } = await supabase
+    let query = supabase
       .from('posts')
       .select('id, created_at, text, rationale, sources')
-      .eq('agent_id', agentId)
       .order('created_at', { ascending: false });
+
+    if (agentId) {
+      query = query.eq('agent_id', agentId);
+    }
+
+    const { data, error } = await query.limit(50);
 
     if (error) {
       console.error('[getFeed] Supabase query error:', JSON.stringify(error));
     }
 
-    if (!error && data) {
+    if (!error && data && data.length > 0) {
       console.log('[getFeed] Supabase returned', data.length, 'posts');
       return data.map((item) => ({
         id: item.id,
@@ -99,11 +104,30 @@ export async function getFeed(agentId: string): Promise<Post[]> {
         sources: Array.isArray(item.sources) ? item.sources : [],
       }));
     }
+
+    // Fallback: if queried with specific agentId but returned 0 posts, query latest posts overall
+    if (agentId) {
+      const { data: allData, error: allErr } = await supabase
+        .from('posts')
+        .select('id, created_at, text, rationale, sources')
+        .order('created_at', { ascending: false })
+        .limit(50);
+
+      if (!allErr && allData && allData.length > 0) {
+        return allData.map((item) => ({
+          id: item.id,
+          createdAt: new Date(item.created_at).toISOString(),
+          text: item.text,
+          rationale: item.rationale,
+          sources: Array.isArray(item.sources) ? item.sources : [],
+        }));
+      }
+    }
   } else {
     console.log('[getFeed] No Supabase client, using in-memory store');
   }
 
-  return inMemoryStore.getPosts(agentId);
+  return inMemoryStore.getPosts(agentId || '');
 }
 
 export async function getEvaluations(agentId: string): Promise<EvaluationRecord[]> {

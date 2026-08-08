@@ -36,23 +36,37 @@ export default function Dashboard() {
   const fetchDashboardData = async (agentId?: string) => {
     try {
       setLoading(true);
-      const targetId = agentId || activeAgent?.id || '';
+      let targetId = agentId || activeAgent?.id || '';
 
-      const infoRes = await fetch(`/api/agent/info${targetId ? `?agentId=${targetId}` : ''}`);
-      if (infoRes.ok) {
-        const infoData = await infoRes.json();
-        if (infoData.agent) {
-          setActiveAgent(infoData.agent);
+      if (!targetId) {
+        const infoRes = await fetch('/api/agent/info', { cache: 'no-store' });
+        if (infoRes.ok) {
+          const infoData = await infoRes.json();
+          if (infoData.agent) {
+            setActiveAgent(infoData.agent);
+            targetId = infoData.agent.id;
+          }
+        }
+      } else {
+        const infoRes = await fetch(`/api/agent/info?agentId=${encodeURIComponent(targetId)}`, { cache: 'no-store' });
+        if (infoRes.ok) {
+          const infoData = await infoRes.json();
+          if (infoData.agent) {
+            setActiveAgent(infoData.agent);
+          }
         }
       }
 
-      const feedRes = await fetch(`/api/agent/feed${targetId ? `?agentId=${targetId}` : ''}`);
+      const [feedRes, evalRes] = await Promise.all([
+        fetch(`/api/agent/feed${targetId ? `?agentId=${encodeURIComponent(targetId)}` : ''}`, { cache: 'no-store' }),
+        fetch(`/api/agent/evaluations${targetId ? `?agentId=${encodeURIComponent(targetId)}` : ''}`, { cache: 'no-store' }),
+      ]);
+
       if (feedRes.ok) {
         const feedData = await feedRes.json();
         setPosts(feedData.posts || []);
       }
 
-      const evalRes = await fetch(`/api/agent/evaluations${targetId ? `?agentId=${targetId}` : ''}`);
       if (evalRes.ok) {
         const evalData = await evalRes.json();
         setEvaluations(evalData.evaluations || []);
