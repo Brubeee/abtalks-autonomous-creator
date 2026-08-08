@@ -124,15 +124,19 @@ export async function getEvaluations(agentId: string): Promise<EvaluationRecord[
 export async function ensureAgentExists(agent: AgentRecord): Promise<void> {
   const supabase = getSupabaseClient();
   if (supabase) {
-    const { data } = await supabase.from('agents').select('id').eq('id', agent.id).single();
+    const { data } = await supabase.from('agents').select('id').eq('id', agent.id).maybeSingle();
     if (!data) {
-      await supabase.from('agents').upsert({
+      console.log('[ensureAgentExists] Agent not found in Supabase, inserting:', agent.id);
+      const { error: upsertErr } = await supabase.from('agents').upsert({
         id: agent.id,
         name: agent.name,
         domain: agent.domain,
         system_prompt: agent.system_prompt,
         created_at: agent.created_at || new Date().toISOString(),
-      });
+      }, { onConflict: 'id' });
+      if (upsertErr) {
+        console.error('[ensureAgentExists] Error upserting agent:', upsertErr);
+      }
     }
   }
 }
@@ -249,7 +253,7 @@ export async function runCronCycle(targetAgentId?: string): Promise<{
     }
 
     if (supabase) {
-      await supabase.from('evaluations').insert({
+      const { error: evalInsertErr } = await supabase.from('evaluations').insert({
         agent_id: agent.id,
         topic_title: evalResult.topicTitle,
         topic_url: evalResult.topicUrl,
@@ -260,6 +264,9 @@ export async function runCronCycle(targetAgentId?: string): Promise<{
           : evalResult.reason,
         status,
       });
+      if (evalInsertErr) {
+        console.error('[runCronCycle] Error inserting evaluation into Supabase:', evalInsertErr);
+      }
     } else {
       await inMemoryStore.saveEvaluation({
         agent_id: agent.id,
