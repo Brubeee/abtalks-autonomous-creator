@@ -3,6 +3,18 @@ import { Persona, AgentRecord, Post, EvaluationRecord, CandidateEvaluation, Cand
 import { discoverCandidateTopics } from './discovery';
 import { evaluateCandidateTopic, writePersonaPost } from './llm';
 
+export function normalizeUrl(rawUrl: string): string {
+  if (!rawUrl) return '';
+  let u = rawUrl.trim().toLowerCase();
+  u = u.replace(/^https?:\/\//, '');
+  u = u.replace(/\/$/, '');
+  u = u.replace(/arxiv\.org\/pdf\//, 'arxiv.org/abs/');
+  if (!u.includes('news.ycombinator.com/item?id=')) {
+    u = u.split('?')[0].split('#')[0];
+  }
+  return u;
+}
+
 export async function initAgent(persona: Persona): Promise<{ agentId: string }> {
   const slug = persona.name
     .toLowerCase()
@@ -160,17 +172,7 @@ export async function runCronCycle(targetAgentId?: string): Promise<{
   }
 
   if (!agent) {
-    const supabase = getSupabaseClient();
-    if (supabase) {
-      const { data } = await supabase.from('agents').select('*').order('created_at', { ascending: false }).limit(1);
-      if (data && data.length > 0) {
-        agent = data[0] as AgentRecord;
-      }
-    }
-  }
-
-  if (!agent) {
-    agent = await inMemoryStore.getLatestAgent();
+    agent = await getLatestAgent();
   }
 
   if (!agent) {
@@ -179,12 +181,48 @@ export async function runCronCycle(targetAgentId?: string): Promise<{
 
   await ensureAgentExists(agent);
 
-  // 2. Pull memory of recent published posts ONLY from the posts table
-  const recentPosts = await getFeed(agent.id);
+  // 2. Fetch all published source URLs for this agent (and across all database posts)
+  const publishedPosts = await getFeed(agent.id);
+  const publishedUrls = new Set<string>();
+
+  publishedPosts.forEach((post) => {
+    if (Array.isArray(post.sources)) {
+      post.sources.forEach((src) => {
+        if (src) publishedUrls.add(normalizeUrl(src));
+      });
+    }
+  });
+
+  const supabase = getSupabaseClient();
+  if (supabase) {
+    const { data: allPosts } = await supabase.from('posts').select('sources');
+    if (allPosts) {
+      allPosts.forEach((p: any) => {
+        if (Array.isArray(p.sources)) {
+          p.sources.forEach((src: string) => {
+            if (src) publishedUrls.add(normalizeUrl(src));
+          });
+        }
+      });
+    }
+  }
 
   // 3. Discover candidates (Hacker News / arXiv)
-  const candidates = await discoverCandidateTopics();
-  if (candidates.length === 0) {
+  const discoveredCandidates = await discoverCandidateTopics();
+
+  // 3b. Hard Deduplication: Filter out already published URLs BEFORE LLM scoring!
+  const novelCandidates: CandidateTopic[] = [];
+  for (const cand of discoveredCandidates) {
+    const norm = normalizeUrl(cand.url);
+    if (publishedUrls.has(norm)) {
+      console.log(`[Cron] Skipping already-published URL: ${cand.url} (normalized: ${norm})`);
+    } else {
+      novelCandidates.push(cand);
+    }
+  }
+
+  if (novelCandidates.length === 0) {
+    console.log(`[Cron] 0 novel candidates found, all ${discoveredCandidates.length} discovered topics already covered.`);
     return {
       agentId: agent.id,
       evaluatedCount: 0,
@@ -193,17 +231,17 @@ export async function runCronCycle(targetAgentId?: string): Promise<{
     };
   }
 
-  // 4. Perform Editorial Evaluation for all candidates
+  // 4. Perform Editorial Evaluation for novel candidates only
   const evaluations: CandidateEvaluation[] = [];
   let bestCandidate: CandidateTopic | null = null;
   let highestScore = 0;
 
-  for (let i = 0; i < candidates.length; i++) {
-    const candidate = candidates[i];
+  for (let i = 0; i < novelCandidates.length; i++) {
+    const candidate = novelCandidates[i];
     if (i > 0) {
       await new Promise((resolve) => setTimeout(resolve, 1500));
     }
-    const evalResult = await evaluateCandidateTopic(agent, candidate, recentPosts.slice(0, 5));
+    const evalResult = await evaluateCandidateTopic(agent, candidate, publishedPosts.slice(0, 5));
     evaluations.push(evalResult);
 
     if (evalResult.passed && evalResult.score > highestScore) {
@@ -217,7 +255,7 @@ export async function runCronCycle(targetAgentId?: string): Promise<{
 
   if (bestCandidate && highestScore >= 7) {
     await new Promise((resolve) => setTimeout(resolve, 1500));
-    const postData = await writePersonaPost(agent, bestCandidate, recentPosts.slice(0, 5), evaluations);
+    const postData = await writePersonaPost(agent, bestCandidate, publishedPosts.slice(0, 5), evaluations);
     const postId = `post_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const createdAt = new Date().toISOString();
 
@@ -229,7 +267,6 @@ export async function runCronCycle(targetAgentId?: string): Promise<{
       sources: postData.sources,
     };
 
-    const supabase = getSupabaseClient();
     if (supabase) {
       await supabase.from('posts').insert({
         id: publishedPost.id,
@@ -245,8 +282,6 @@ export async function runCronCycle(targetAgentId?: string): Promise<{
   }
 
   // 6. Log evaluation records with distinct statuses ('published' vs 'approved_runner_up' vs 'rejected')
-  const supabase = getSupabaseClient();
-
   for (const evalResult of evaluations) {
     let status: 'published' | 'approved_runner_up' | 'rejected' = 'rejected';
 
@@ -290,7 +325,7 @@ export async function runCronCycle(targetAgentId?: string): Promise<{
 
   return {
     agentId: agent.id,
-    evaluatedCount: candidates.length,
+    evaluatedCount: novelCandidates.length,
     published: Boolean(publishedPost),
     selectedTopic: bestCandidate?.title,
     evaluations,

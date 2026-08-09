@@ -1,12 +1,25 @@
 import { CandidateTopic } from './types';
 
+function normalizeUrl(rawUrl: string): string {
+  if (!rawUrl) return '';
+  let u = rawUrl.trim().toLowerCase();
+  u = u.replace(/^https?:\/\//, '');
+  u = u.replace(/\/$/, '');
+  u = u.replace(/arxiv\.org\/pdf\//, 'arxiv.org/abs/');
+  if (!u.includes('news.ycombinator.com/item?id=')) {
+    u = u.split('?')[0].split('#')[0];
+  }
+  return u;
+}
+
 async function fetchPageMetaSnippet(url: string): Promise<string | null> {
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 2500); // 2.5s timeout
+    const timeoutId = setTimeout(() => controller.abort(), 2500);
 
     const res = await fetch(url, {
       signal: controller.signal,
+      cache: 'no-store',
       headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' },
     });
     clearTimeout(timeoutId);
@@ -14,7 +27,6 @@ async function fetchPageMetaSnippet(url: string): Promise<string | null> {
     if (!res.ok) return null;
     const html = await res.text();
 
-    // Extract meta description or OG description or first paragraph
     const metaMatch = /<meta\s+name=["']description["']\s+content=["']([\s\S]*?)["']/i.exec(html) ||
                       /<meta\s+property=["']og:description["']\s+content=["']([\s\S]*?)["']/i.exec(html);
 
@@ -36,10 +48,10 @@ async function fetchPageMetaSnippet(url: string): Promise<string | null> {
   }
 }
 
-export async function fetchHackerNewsTopics(limit: number = 10): Promise<CandidateTopic[]> {
+export async function fetchHackerNewsTopics(limit: number = 15): Promise<CandidateTopic[]> {
   try {
     const topStoriesRes = await fetch('https://hacker-news.firebaseio.com/v0/topstories.json', {
-      next: { revalidate: 60 },
+      cache: 'no-store',
     });
     if (!topStoriesRes.ok) return [];
 
@@ -49,7 +61,7 @@ export async function fetchHackerNewsTopics(limit: number = 10): Promise<Candida
     const storyPromises = targetIds.map(async (id) => {
       try {
         const res = await fetch(`https://hacker-news.firebaseio.com/v0/item/${id}.json`, {
-          next: { revalidate: 300 },
+          cache: 'no-store',
         });
         if (!res.ok) return null;
         const item = await res.json();
@@ -108,11 +120,13 @@ export async function fetchHackerNewsTopics(limit: number = 10): Promise<Candida
   }
 }
 
-export async function fetchArxivTopics(query: string = 'cat:cs.AI OR cat:cs.CR', limit: number = 5): Promise<CandidateTopic[]> {
+export async function fetchArxivTopics(query: string = 'cat:cs.AI OR cat:cs.CR OR cat:cs.LG OR cat:cs.CL', limit: number = 8): Promise<CandidateTopic[]> {
   try {
     const encodedQuery = encodeURIComponent(query);
-    const url = `http://export.arxiv.org/api/query?search_query=${encodedQuery}&max_results=${limit}&sortBy=submittedDate&sortOrder=descending`;
-    const res = await fetch(url, { next: { revalidate: 3600 } });
+    // Rotate offset slightly based on minute to fetch varied recent preprints
+    const startOffset = (new Date().getMinutes() % 3) * 5;
+    const url = `http://export.arxiv.org/api/query?search_query=${encodedQuery}&start=${startOffset}&max_results=${limit}&sortBy=submittedDate&sortOrder=descending`;
+    const res = await fetch(url, { cache: 'no-store' });
     if (!res.ok) return [];
 
     const xml = await res.text();
@@ -165,10 +179,22 @@ export async function fetchArxivTopics(query: string = 'cat:cs.AI OR cat:cs.CR',
 
 export async function discoverCandidateTopics(): Promise<CandidateTopic[]> {
   const [hnTopics, arxivTopics] = await Promise.all([
-    fetchHackerNewsTopics(8),
-    fetchArxivTopics('cat:cs.AI OR cat:cs.CR', 4),
+    fetchHackerNewsTopics(12),
+    fetchArxivTopics('cat:cs.AI OR cat:cs.CR OR cat:cs.LG OR cat:cs.CL', 8),
   ]);
 
   const combined = [...hnTopics, ...arxivTopics];
-  return combined.sort(() => 0.5 - Math.random()).slice(0, 5);
+  const seenUrls = new Set<string>();
+  const uniqueCandidates: CandidateTopic[] = [];
+
+  for (const topic of combined) {
+    const norm = normalizeUrl(topic.url);
+    if (!seenUrls.has(norm)) {
+      seenUrls.add(norm);
+      uniqueCandidates.push(topic);
+    }
+  }
+
+  // Shuffle and return 10-12 candidate topics
+  return uniqueCandidates.sort(() => 0.5 - Math.random()).slice(0, 10);
 }
