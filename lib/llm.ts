@@ -50,7 +50,7 @@ async function fetchGeminiWithRetry(model: string, apiKey: string, prompt: strin
       const errorText = await res.text();
       console.warn(`[GEMINI API MODEL ${model} HTTP ${res.status}]:`, errorText);
 
-      if (res.status === 429) {
+      if (res.status === 429 || res.status >= 500) {
         if (attempt < maxRetries) {
           continue;
         }
