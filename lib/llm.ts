@@ -12,9 +12,11 @@ function getOpenAiApiKey(): string | undefined {
   return key;
 }
 
-// Supported Gemini models
+// Supported Gemini models with automatic quota fallback
 const GEMINI_MODELS = [
   'gemini-2.5-flash',
+  'gemini-flash-lite-latest',
+  'gemini-flash-latest',
 ];
 
 async function delayMs(ms: number): Promise<void> {
