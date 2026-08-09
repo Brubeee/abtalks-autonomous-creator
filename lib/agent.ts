@@ -201,7 +201,7 @@ export async function runCronCycle(targetAgentId?: string): Promise<{
   for (let i = 0; i < candidates.length; i++) {
     const candidate = candidates[i];
     if (i > 0) {
-      await new Promise((resolve) => setTimeout(resolve, 600));
+      await new Promise((resolve) => setTimeout(resolve, 1500));
     }
     const evalResult = await evaluateCandidateTopic(agent, candidate, recentPosts.slice(0, 5));
     evaluations.push(evalResult);
@@ -216,6 +216,7 @@ export async function runCronCycle(targetAgentId?: string): Promise<{
   let publishedPost: Post | null = null;
 
   if (bestCandidate && highestScore >= 7) {
+    await new Promise((resolve) => setTimeout(resolve, 1500));
     const postData = await writePersonaPost(agent, bestCandidate, recentPosts.slice(0, 5), evaluations);
     const postId = `post_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const createdAt = new Date().toISOString();

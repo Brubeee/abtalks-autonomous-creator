@@ -14,14 +14,7 @@ function getOpenAiApiKey(): string | undefined {
 
 // Supported Gemini models with fallback ordering for free-tier quotas
 const GEMINI_MODELS = [
-  'gemini-3.5-flash',
-  'gemini-3.5-flash-lite',
-  'gemini-3.1-flash-lite',
-  'gemini-flash-lite-latest',
-  'gemini-3-flash-preview',
   'gemini-2.5-flash',
-  'gemini-2.0-flash',
-  'gemini-flash-latest',
 ];
 
 const rateLimitedUntil: Record<string, number> = {};
@@ -42,6 +35,52 @@ function markModelRateLimited(model: string, retryDelaySeconds: number = 45): vo
 
 async function delayMs(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchGeminiWithRetry(model: string, apiKey: string, prompt: string, taskLabel: string): Promise<any> {
+  const maxRetries = 2;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    if (attempt > 0) {
+      const waitTime = attempt * 3000;
+      console.warn(`[GEMINI API MODEL ${model} HTTP 429]: Rate limit encountered for ${taskLabel}. Retrying in ${waitTime / 1000}s (Attempt ${attempt + 1}/${maxRetries + 1})...`);
+      await delayMs(waitTime);
+    }
+
+    console.log(`[GEMINI API] Attempting live call to model "${model}" for ${taskLabel} (attempt ${attempt + 1})...`);
+    try {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { responseMimeType: 'application/json' },
+        }),
+      });
+
+      if (res.ok) {
+        return await res.json();
+      }
+
+      const errorText = await res.text();
+      console.warn(`[GEMINI API MODEL ${model} HTTP ${res.status}]:`, errorText);
+
+      if (res.status === 429) {
+        markModelRateLimited(model, 15);
+        if (attempt < maxRetries) {
+          continue;
+        }
+      }
+      return null;
+    } catch (e) {
+      console.warn(`[GEMINI API MODEL ${model}] Fetch error for ${taskLabel}:`, e);
+      if (attempt < maxRetries) {
+        await delayMs(2000);
+        continue;
+      }
+      return null;
+    }
+  }
+  return null;
 }
 
 export async function evaluateCandidateTopic(
@@ -111,64 +150,44 @@ Output JSON strictly formatted as:
       }
 
       geminiAttempted = true;
-      console.log(`[GEMINI API] Attempting live call to model "${model}" for candidate evaluation "${candidate.title}"...`);
-      try {
-        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }] }],
-            generationConfig: { responseMimeType: 'application/json' },
-          }),
-        });
+      const data = await fetchGeminiWithRetry(model, apiKey, prompt, `evaluation "${candidate.title}"`);
+      if (data) {
+        console.log(`\n========================================`);
+        console.log(`[REAL GEMINI RAW API EVALUATION RESPONSE (${model}) for "${candidate.title}"]:`);
+        console.log(JSON.stringify(data, null, 2));
+        console.log(`========================================\n`);
 
-        if (res.ok) {
-          const data = await res.json();
-          console.log(`\n========================================`);
-          console.log(`[REAL GEMINI RAW API EVALUATION RESPONSE (${model}) for "${candidate.title}"]:`);
-          console.log(JSON.stringify(data, null, 2));
-          console.log(`========================================\n`);
-
-          const rawJson = data.candidates?.[0]?.content?.parts?.[0]?.text;
-          if (rawJson) {
-            let parsed: any;
-            try {
-              parsed = JSON.parse(rawJson);
-            } catch (parseError) {
-              console.error(`[GEMINI API] Evaluation JSON parse failed for model ${model}:`, parseError);
-              console.error('[GEMINI API] Raw evaluation text:', rawJson);
-              continue;
-            }
-            const sub: SubScores = {
-              technicalDepth: Math.min(10, Math.max(1, Number(parsed.subScores?.technicalDepth) || 5)),
-              relevance: Math.min(10, Math.max(1, Number(parsed.subScores?.relevance) || 5)),
-              personaFit: Math.min(10, Math.max(1, Number(parsed.subScores?.personaFit) || 5)),
-              novelty: Math.min(10, Math.max(1, Number(parsed.subScores?.novelty) || 5)),
-              justifications: parsed.justifications || {},
-            };
-            const avgScore = Math.round((sub.technicalDepth + sub.relevance + sub.personaFit + sub.novelty) / 4);
-            const passed = avgScore >= 7;
-
-            return {
-              candidate,
-              topicTitle: candidate.title,
-              topicUrl: candidate.url,
-              score: avgScore,
-              subScores: sub,
-              reason: parsed.reason || 'Evaluated across 4 distinct dimensions.',
-              passed,
-            };
+        const rawJson = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (rawJson) {
+          let parsed: any;
+          try {
+            parsed = JSON.parse(rawJson);
+          } catch (parseError) {
+            console.error(`[GEMINI API] Evaluation JSON parse failed for model ${model}:`, parseError);
+            console.error('[GEMINI API] Raw evaluation text:', rawJson);
+            continue;
           }
-          console.error(`[GEMINI API] Evaluation response from model ${model} did not contain usable JSON text.`);
-        } else {
-          const errorText = await res.text();
-          console.warn(`[GEMINI API MODEL ${model} HTTP ${res.status}]:`, errorText);
-          if (res.status === 429) {
-            markModelRateLimited(model, 45);
-          }
+          const sub: SubScores = {
+            technicalDepth: Math.min(10, Math.max(1, Number(parsed.subScores?.technicalDepth) || 5)),
+            relevance: Math.min(10, Math.max(1, Number(parsed.subScores?.relevance) || 5)),
+            personaFit: Math.min(10, Math.max(1, Number(parsed.subScores?.personaFit) || 5)),
+            novelty: Math.min(10, Math.max(1, Number(parsed.subScores?.novelty) || 5)),
+            justifications: parsed.justifications || {},
+          };
+          const avgScore = Math.round((sub.technicalDepth + sub.relevance + sub.personaFit + sub.novelty) / 4);
+          const passed = avgScore >= 7;
+
+          return {
+            candidate,
+            topicTitle: candidate.title,
+            topicUrl: candidate.url,
+            score: avgScore,
+            subScores: sub,
+            reason: parsed.reason || 'Evaluated across 4 distinct dimensions.',
+            passed,
+          };
         }
-      } catch (e) {
-        console.warn(`Gemini evaluation fetch error for model ${model}:`, e);
+        console.error(`[GEMINI API] Evaluation response from model ${model} did not contain usable JSON text.`);
       }
     }
   } else {
@@ -315,52 +334,32 @@ Output JSON strictly formatted as:
       }
 
       geminiAttempted = true;
-      console.log(`[GEMINI API] Executing live call to model "${model}" for post writing "${candidate.title}"...`);
-      try {
-        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }] }],
-            generationConfig: { responseMimeType: 'application/json' },
-          }),
-        });
+      const data = await fetchGeminiWithRetry(model, apiKey, prompt, `post writing "${candidate.title}"`);
+      if (data) {
+        console.log(`\n========================================`);
+        console.log(`[REAL GEMINI RAW API WRITING RESPONSE (${model}) for "${candidate.title}"]:`);
+        console.log(JSON.stringify(data, null, 2));
+        console.log(`========================================\n`);
 
-        if (res.ok) {
-          const data = await res.json();
-          console.log(`\n========================================`);
-          console.log(`[REAL GEMINI RAW API WRITING RESPONSE (${model}) for "${candidate.title}"]:`);
-          console.log(JSON.stringify(data, null, 2));
-          console.log(`========================================\n`);
-
-          const rawJson = data.candidates?.[0]?.content?.parts?.[0]?.text;
-          if (rawJson) {
-            let parsed: any;
-            try {
-              parsed = JSON.parse(rawJson);
-            } catch (parseError) {
-              console.error(`[GEMINI API] Writing JSON parse failed for model ${model}:`, parseError);
-              console.error('[GEMINI API] Raw writing text:', rawJson);
-              continue;
-            }
-            if (parsed.text && parsed.rationale) {
-              return {
-                text: parsed.text,
-                rationale: parsed.rationale,
-                sources: Array.isArray(parsed.sources) && parsed.sources.length > 0 ? parsed.sources : [candidate.url],
-              };
-            }
+        const rawJson = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (rawJson) {
+          let parsed: any;
+          try {
+            parsed = JSON.parse(rawJson);
+          } catch (parseError) {
+            console.error(`[GEMINI API] Writing JSON parse failed for model ${model}:`, parseError);
+            console.error('[GEMINI API] Raw writing text:', rawJson);
+            continue;
           }
-          console.error(`[GEMINI API] Writing response from model ${model} did not contain usable JSON text.`);
-        } else {
-          const errorText = await res.text();
-          console.warn(`[GEMINI API WRITING MODEL ${model} HTTP ${res.status}]:`, errorText);
-          if (res.status === 429) {
-            markModelRateLimited(model, 45);
+          if (parsed.text && parsed.rationale) {
+            return {
+              text: parsed.text,
+              rationale: parsed.rationale,
+              sources: Array.isArray(parsed.sources) && parsed.sources.length > 0 ? parsed.sources : [candidate.url],
+            };
           }
         }
-      } catch (e) {
-        console.warn(`Gemini post writing fetch error for model ${model}:`, e);
+        console.error(`[GEMINI API] Writing response from model ${model} did not contain usable JSON text.`);
       }
     }
   } else {
