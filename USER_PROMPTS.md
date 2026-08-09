@@ -4,16 +4,126 @@ This document contains the **exact, word-for-word prompt history and user instru
 
 ---
 
-### 1. Project Goal & Initial Setup
+### 1. Initial Hackathon Goal & Specification
+
+```text
+/goal    Autonomous AI Creator (ABTalks Hackathon, PS3)
+
+Build a full-stack web application for the "Autonomous AI Creator" hackathon challenge. Read this entire spec before starting, then build end-to-end without stopping for confirmation unless something below is genuinely ambiguous.
+
+## What this is
+
+An autonomous AI persona (a technology/AI-focused writer, e.g. "AI Security Researcher" or similar, choose a specific name and identity and stay consistent) that independently discovers topics, decides what's worth publishing, writes posts in a consistent voice, and keeps publishing over ~48 hours with zero human input after initialization.
+
+## Critical constraint
+
+This must NOT depend on Antigravity, my IDE, or my laptop being open. Publishing has to happen via an externally hosted scheduled job (GitHub Actions cron, or Vercel Cron if deploying to Vercel — pick whichever fits the stack you choose) that fires independently on a public deployment. Evaluators will poll the feed endpoint over ~48 hours; state must persist in a hosted database (Supabase — I have an account, use Postgres via Supabase), not local files or in-memory state.
+
+## Stack
+
+Choose whatever you're most productive with (Next.js on Vercel is a safe default given the cron support), but the two hard requirements are: (1) a real external scheduler, not app-dependent, and (2) Supabase Postgres for persistence.
+
+## Required API endpoints (exact contract)
+
+### POST /api/agent/init
+Called once. Request:
+```json
+{ "persona": { "name": "...", "domain": "..." } }
+```
+Response:
+```json
+{ "agentId": "..." }
+```
+This should set up the persona's identity/voice config in the DB and NOT publish anything immediately — first post should come from the first scheduled cron run after init, not synchronously.
+
+### GET /api/agent/feed?agentId=...
+Response:
+```json
+{ "posts": [
+  {
+    "id": "...",
+    "createdAt": "ISO 8601 UTC",
+    "text": "...",
+    "rationale": "why this topic was selected, why relevant now, why chosen over alternatives",
+    "sources": ["..."]
+  }
+] }
+```
+- Reverse chronological order (newest first).
+- Immediately after init, return `{ "posts": [] }` — do not synthesize a fake initial post.
+- Never delete or hide past posts — the feed must accumulate over time.
+
+### GET /api/cron (or POST /api/cron, secured via CRON_SECRET)
+Triggered every ~3 hours by Vercel Cron or GitHub Actions. Each trigger executes one autonomous cycle:
+1. Discover candidate topics (e.g. from Hacker News API, arXiv API, or RSS feeds of major tech sources — pick 2-3 reliable public APIs).
+2. Evaluate candidates against persona rules & editorial bar. Log rejection reasons for low-scoring topics.
+3. Select winner (if any meets the bar; if none does, log that decision and publish nothing this cycle).
+4. Write persona commentary + rationale.
+5. Persist post + evaluations to DB.
+
+## Minimum viable persona
+
+Choose a distinct identity, e.g.:
+- Name: "Dr. Cipher" (or similar)
+- Domain: LLM Red-Teaming & Safety
+- Voice: Analytical, skeptical of hype, hyper-focused on security trade-offs, writing in first person ("I examined...", "My concern with...")
+
+## Editorial & evaluation logic (the "AI judgment" part)
+
+The persona MUST apply a strict editorial bar, not just publish everything it finds. For each candidate topic:
+- Score 1-10 on relevance to domain, technical depth, and novelty relative to past posts.
+- Reject topics scoring < 7 with logged reasons (e.g. "Too superficial", "Already covered similar paper yesterday", "Off-domain marketing hype").
+- Keep an evaluation log table in DB (`evaluations`: topic title, score, reason, status: published / rejected) so evaluators can inspect the agent's decision quality.
+
+## Post quality rules
+
+- Length: 120-220 words per post commentary.
+- Must sound like a domain expert, not a generic summarizer.
+- Must include the `rationale` field in the API payload explaining WHY this topic was chosen over alternatives evaluated in the same cycle.
+
+## UI / Dashboard
+
+A clean web page (the root `/`) that displays:
+- Persona identity & stance
+- Current feed of published posts with sources & rationale
+- Evaluation log drawer/table showing rejected topics and why they were rejected (proves the agent is making decisions, not just forwarding RSS)
+
+## Architecture & persistence requirements
+
+- `schema.sql` at repo root with the database DDL so evaluators can inspect/recreate the schema.
+- Hosted Supabase Postgres database.
+- Hosted deployment (Vercel recommended).
+- GitHub Actions workflow (`.github/workflows/cron.yml`) or Vercel Cron (`vercel.json`) set to trigger every ~3 hours.
+- A `PROMPTS.md` at repo root documenting the exact prompts used for topic evaluation, post writing, and persona stance guidelines (evaluators will check this).
+
+## Out of scope
+
+- Social media API posting (X/LinkedIn API integration)
+- Complex multi-agent setups
+- Auth / accounts
+
+## Deliverables
+
+1. Full codebase pushed to public GitHub repo.
+2. `schema.sql` at repo root.
+3. `PROMPTS.md` at repo root.
+4. `GEMINI.md` at repo root documenting architecture decisions.
+5. README with deployment instructions and API verification steps.
+```
+> **Note:** Initial Hackathon PS3 goal prompt that scaffolded the entire application structure (Next.js App Router, Supabase database schema `schema.sql`, HackerNews/arXiv topic discovery, API endpoints `POST /api/agent/init` and `GET /api/agent/feed`, visual dashboard UI, and Vercel/GitHub Actions cron scheduler).
+
+---
+
+### 2. Working Directory Command
 
 ```text
 so in cd "-------ABTALKS"
 ```
-> **Note:** Triggered initial project setup based on `GEMINI.md` constraints (Next.js App Router, Supabase Postgres schema `agents`, `posts`, `evaluations`, API endpoints `POST /api/agent/init` and `GET /api/agent/feed`, HackerNews/arXiv topic discovery, and Vercel/GitHub Actions cron scheduler).
+> **Note:** Triggered navigation and initial build verification within the project directory.
 
 ---
 
-### 2. Live Site & Cron Verification
+### 3. Live Site & Cron Verification
 
 ```text
 is the site actually up?  and the cron cycle working?
@@ -22,7 +132,7 @@ is the site actually up?  and the cron cycle working?
 
 ---
 
-### 3. Active Cron Checking
+### 4. Active Cron Checking
 
 ```text
 how do i check if cron really active
@@ -31,7 +141,7 @@ how do i check if cron really active
 
 ---
 
-### 4. Feed & Cron Output Investigation
+### 5. Feed & Cron Output Investigation
 
 ```text
 it says executed but doent show shit
@@ -40,7 +150,7 @@ it says executed but doent show shit
 
 ---
 
-### 5. Cron Re-trigger Testing
+### 6. Cron Re-trigger Testing
 
 ```text
 i trigerred again, nothing
@@ -49,7 +159,7 @@ i trigerred again, nothing
 
 ---
 
-### 6. Supabase Database Inspection
+### 7. Supabase Database Inspection
 
 ```text
 this is how supabase looks like, pretty erronous to me
@@ -58,7 +168,7 @@ this is how supabase looks like, pretty erronous to me
 
 ---
 
-### 7. Vercel & Supabase Connection Audit
+### 8. Vercel & Supabase Connection Audit
 
 ```text
 I believe there is some error between the link in vercel and supabase, supabase is sending and receiving stuff, but the site is not showing them at all, do u need to look at some more info to find the real error?
@@ -67,7 +177,7 @@ I believe there is some error between the link in vercel and supabase, supabase 
 
 ---
 
-### 8. Full End-to-End Code & System Audit
+### 9. Full End-to-End Code & System Audit
 
 ```text
 they arent even showing in the eval logs - the 5 u see are old ones, okay, now i need you to do a complete and thorough checkup, check yourself by clicking the button on the website if u want to. But complete this by hook or by crook. /browser split up into 2 -3 agents that look at the codes in vercel and in supabase and check discrepancies anywhere/teamwork-preview
@@ -76,7 +186,7 @@ they arent even showing in the eval logs - the 5 u see are old ones, okay, now i
 
 ---
 
-### 9. Direct API Testing Instructions
+### 10. Direct API Testing Instructions
 
 ```text
 ykw, nvm the site, it aint important anyway, how can i check the api thingy
@@ -85,7 +195,7 @@ ykw, nvm the site, it aint important anyway, how can i check the api thingy
 
 ---
 
-### 10. Database Reset & Codex Test Prompt Request
+### 11. Database Reset & Codex Test Prompt Request
 
 ```text
 Im gonna get codex to check out this work, give me a prompt for it to look at just the apis,and check out if they work, for now, delete the current data which has been stored in supabase, so that a new run can be properly tested.
@@ -94,7 +204,7 @@ Im gonna get codex to check out this work, give me a prompt for it to look at ju
 
 ---
 
-### 11. Feed Endpoint Cache Investigation
+### 12. Feed Endpoint Cache Investigation
 
 ```text
 if supabase is clean why does this still show all of this
@@ -103,7 +213,7 @@ if supabase is clean why does this still show all of this
 
 ---
 
-### 12. Cron Feed Mismatch Resolution
+### 13. Cron Feed Mismatch Resolution
 
 ```text
 no no, it does work, my issue is that it isnt connected, the post i just ran with the run cron now, doesnt show up onto the endpoint,and it is just {"posts":[]}
@@ -112,7 +222,7 @@ no no, it does work, my issue is that it isnt connected, the post i just ran wit
 
 ---
 
-### 13. Feed Auto-Resolution Confirmation
+### 14. Feed Auto-Resolution Confirmation
 
 ```text
 HOLY SHIT IT WORKS, WHY DIDNT YOU GIMME THE DEFFAULT FEED INITIALLY
@@ -121,7 +231,7 @@ HOLY SHIT IT WORKS, WHY DIDNT YOU GIMME THE DEFFAULT FEED INITIALLY
 
 ---
 
-### 14. Unattended Cron Cycle Check
+### 15. Unattended Cron Cycle Check
 
 ```text
 wait just one thing now, deos the cron cycle work
@@ -130,7 +240,7 @@ wait just one thing now, deos the cron cycle work
 
 ---
 
-### 15. Scheduled Overnight Runs Expectation
+### 16. Scheduled Overnight Runs Expectation
 
 ```text
 so by tom morning, i should have 2 more atleast right, published posts i mean
@@ -139,7 +249,7 @@ so by tom morning, i should have 2 more atleast right, published posts i mean
 
 ---
 
-### 16. Fix Prompt — Model Name Typo & Rate Limit Resilience
+### 17. Fix Prompt — Model Name Typo & Rate Limit Resilience
 
 ```markdown
 # Fix prompt — wrong Gemini model name breaking every live cron run
@@ -205,7 +315,7 @@ verification run as proof, not just a summary claiming it's fixed.
 
 ---
 
-### 17. Log Warning Diagnosis
+### 18. Log Warning Diagnosis
 
 ```text
 i just ran this
@@ -214,7 +324,7 @@ i just ran this
 
 ---
 
-### 18. Published Posts View Request
+### 19. Published Posts View Request
 
 ```text
 how to open the posts page, like the published one
@@ -223,7 +333,7 @@ how to open the posts page, like the published one
 
 ---
 
-### 19. HTTP 500 Transient Error Investigation
+### 20. HTTP 500 Transient Error Investigation
 
 ```text
 i got a 500 error but the output still appeared, "posts": [ ... ] how does that work
@@ -232,7 +342,7 @@ i got a 500 error but the output still appeared, "posts": [ ... ] how does that 
 
 ---
 
-### 20. Fix Prompt — Hard Deduplication & Discovery Pool Widening
+### 21. Fix Prompt — Hard Deduplication & Discovery Pool Widening
 
 ```markdown
 # Fix prompt — hard dedup by source URL, memory check is failing
@@ -319,7 +429,7 @@ rather than just a final claim that it's fixed.
 
 ---
 
-### 21. Database Clearance Request
+### 22. Database Clearance Request
 
 ```text
 okay great, last time, clear the database of the /feed. we'll just let cron run one more time to verify
@@ -328,7 +438,7 @@ okay great, last time, clear the database of the /feed. we'll just let cron run 
 
 ---
 
-### 22. Feature Overview Request
+### 23. Feature Overview Request
 
 ```text
 give a complete overview of everything that has been done, each feature/
@@ -337,7 +447,7 @@ give a complete overview of everything that has been done, each feature/
 
 ---
 
-### 23. Security Audit Request
+### 24. Security Audit Request
 
 ```markdown
 Do a final security audit of this repo before submission. We're on a
@@ -381,7 +491,7 @@ output that proves it.
 
 ---
 
-### 24. Authenticity Log Request
+### 25. Authenticity Log Request
 
 ```markdown
 Compile a complete, honest PROMPTS.md at the repo root documenting the
