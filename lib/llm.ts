@@ -12,33 +12,17 @@ function getOpenAiApiKey(): string | undefined {
   return key;
 }
 
-// Supported Gemini models with fallback ordering for free-tier quotas
+// Supported Gemini models
 const GEMINI_MODELS = [
   'gemini-2.5-flash',
 ];
-
-const rateLimitedUntil: Record<string, number> = {};
-
-function isModelRateLimited(model: string): boolean {
-  const until = rateLimitedUntil[model];
-  if (!until) return false;
-  if (Date.now() > until) {
-    delete rateLimitedUntil[model];
-    return false;
-  }
-  return true;
-}
-
-function markModelRateLimited(model: string, retryDelaySeconds: number = 45): void {
-  rateLimitedUntil[model] = Date.now() + retryDelaySeconds * 1000;
-}
 
 async function delayMs(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function fetchGeminiWithRetry(model: string, apiKey: string, prompt: string, taskLabel: string): Promise<any> {
-  const maxRetries = 2;
+  const maxRetries = 3;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     if (attempt > 0) {
       const waitTime = attempt * 3000;
@@ -65,7 +49,6 @@ async function fetchGeminiWithRetry(model: string, apiKey: string, prompt: strin
       console.warn(`[GEMINI API MODEL ${model} HTTP ${res.status}]:`, errorText);
 
       if (res.status === 429) {
-        markModelRateLimited(model, 15);
         if (attempt < maxRetries) {
           continue;
         }
@@ -74,7 +57,7 @@ async function fetchGeminiWithRetry(model: string, apiKey: string, prompt: strin
     } catch (e) {
       console.warn(`[GEMINI API MODEL ${model}] Fetch error for ${taskLabel}:`, e);
       if (attempt < maxRetries) {
-        await delayMs(2000);
+        await delayMs(2500);
         continue;
       }
       return null;
@@ -145,10 +128,6 @@ Output JSON strictly formatted as:
   let geminiAttempted = false;
   if (apiKey) {
     for (const model of GEMINI_MODELS) {
-      if (isModelRateLimited(model)) {
-        continue;
-      }
-
       geminiAttempted = true;
       const data = await fetchGeminiWithRetry(model, apiKey, prompt, `evaluation "${candidate.title}"`);
       if (data) {
@@ -329,10 +308,6 @@ Output JSON strictly formatted as:
   let geminiAttempted = false;
   if (apiKey) {
     for (const model of GEMINI_MODELS) {
-      if (isModelRateLimited(model)) {
-        continue;
-      }
-
       geminiAttempted = true;
       const data = await fetchGeminiWithRetry(model, apiKey, prompt, `post writing "${candidate.title}"`);
       if (data) {
